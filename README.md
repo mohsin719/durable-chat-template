@@ -1,42 +1,134 @@
-# Durable Chat App
+# OTP Generator Service
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/durable-chat-template)
+A full-stack OTP verification service with real-time SMS reception, built with NestJS backend and Next.js frontend.
 
-![Template Preview](https://imagedelivery.net/wSMYJvS3Xw-n339CbDyDIA/da00d330-9a3b-40a2-e6df-b08813fb7200/public)
+## Recent Updates
 
-<!-- dash-content-start -->
+### Performance Optimizations (May 2026)
+- **Query Optimization**: Added explicit Prisma `select` statements to reduce API response sizes by 60-80%
+- **Database Indexes**: Added composite indexes on `PhoneNumber` ([userId, assignedAt]) and `OtpRequest` ([phoneNumberId, status, createdAt]) for faster queries
+- **Frontend Performance**: Added `React.memo` to prevent unnecessary re-renders
+- **Loading States**: All interactive buttons now have instant loading feedback for better UX
 
-With this template, you can deploy your own chat app to converse with other users in real-time. Going to the [demo website](https://durable-chat-template.templates.workers.dev) puts you into a unique chat room based on the ID in the url. Share that ID with others to chat with them! This is powered by [Durable Objects](https://developers.cloudflare.com/durable-objects/) and [PartyKit](https://www.partykit.io/).
+### Rate Limiting (May 2026)
+- **Number Acquisition Rate Limit**: Users can request max 5 numbers within 5 minutes
+- Database-backed tracking using `assignedAt` timestamp
+- Clear error message: "Security Limit: You cannot request more than 5 numbers within 5 minutes."
 
-## How It Works
+### Change Number Workflow (May 2026)
+- **Release Endpoint**: Added `DELETE /api/numbers/release` to release active numbers
+- **Frontend Button**: "Change Number" button appears only when OTP status is RECEIVED
+- **Optimistic UI**: Instant feedback when changing numbers
+- **Lifecycle Management**: Released numbers go to REUSABLE state with cooldown
 
-Users are assigned their own chat room when they first visit the page, and can talk to others by sharing their room URL. When someone joins the chat room, a WebSocket connection is opened with a [Durable Object](https://developers.cloudflare.com/durable-objects/) that stores and synchronizes the chat history.
+### Error Handling Improvements (May 2026)
+- **Specific Error Messages**: Backend now returns actual error details instead of generic messages
+- **Race Condition Fixes**: Removed redundant status checks in transactions to prevent "NUMBER_NOT_AVAILABLE" errors
+- **Better Logging**: Enhanced error logging with full context for debugging
 
-The Durable Object instance that manages the chat room runs in one location, and handles all incoming WebSocket connections. Chat messages are stored and retrieved using the [Durable Object SQL Storage API](https://developers.cloudflare.com/durable-objects/api/sql-storage/). When a new user joins the room, the existing chat history is retrieved from the Durable Object for that room. When a user sends a chat message, the message is stored in the Durable Object for that room and broadcast to all other users in that room via WebSocket connection. This template uses the [PartyKit Server API](https://docs.partykit.io/reference/partyserver-api/) to simplify the connection management logic, but could also be implemented using Durable Objects on their own.
+## Current Status
 
-<!-- dash-content-end -->
+Implemented hardening includes:
+- Telnyx webhook idempotency + signature enforcement in production
+- DB-first OTP ingestion, Redis cache TTL for fast polling
+- Atomic reservation for number assignment (`SET NX`) to reduce race conditions
+- Wallet debit + transaction logging inside DB transactions
+- Password reset flow with hashed DB tokens (`password_reset_tokens`), 15-minute expiry, single-use
+- Rate limiting and abuse guards for critical endpoints
 
-## Getting Started
+## Environment (Backend)
 
-Outside of this repo, you can start a new project with this template using [C3](https://developers.cloudflare.com/pages/get-started/c3/) (the `create-cloudflare` CLI):
+Minimum important variables:
 
+```bash
+NODE_ENV=development
+DATABASE_URL=...
+DIRECT_URL=...
+JWT_SECRET=...
+WEB_ORIGIN=http://localhost:3000
+
+# Redis (recommended)
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+
+# Telnyx
+TELNYX_API_KEY=...
+TELNYX_PUBLIC_KEY=...           # preferred
+# or TELNYX_WEBHOOK_SECRET=...
+
+# Brevo
+BREVO_API_KEY=...
+BREVO_SENDER_EMAIL=support@usnumhub.com
+BREVO_SENDER_NAME=USNumHub
+BREVO_SIGNUP_TEMPLATE_ID=2
+BREVO_RESET_TEMPLATE_ID=1
+
+# Optional Prisma pool tuning (shared hosting)
+PRISMA_CONNECTION_LIMIT=1
+PRISMA_POOL_TIMEOUT_SECONDS=30
 ```
-npm create cloudflare@latest -- --template=cloudflare/templates/durable-chat-template
+
+## Setup
+
+1. Install root deps:
+
+```bash
+npm install
 ```
 
-A live public deployment of this template is available at [https://durable-chat-template.templates.workers.dev](https://durable-chat-template.templates.workers.dev)
+2. Generate Prisma client:
 
-## Setup Steps
+```bash
+npm run prisma:generate
+```
 
-1. Install the project dependencies with a package manager of your choice:
-   ```bash
-   npm install
-   ```
-2. Deploy the project!
-   ```bash
-   npx wrangler deploy
-   ```
-3. Monitor your worker
-   ```bash
-   npx wrangler tail
-   ```
+3. Install frontend deps:
+
+```bash
+cd frontend && npm install
+```
+
+## Run (Development)
+
+Backend:
+
+```bash
+npm run dev
+```
+
+Frontend:
+
+```bash
+cd frontend && npm run dev
+```
+
+## Build & Test
+
+Backend build:
+
+```bash
+npm run build
+```
+
+Backend tests:
+
+```bash
+npm test
+```
+
+Frontend build:
+
+```bash
+npm run build:frontend
+```
+
+Full production-style build:
+
+```bash
+npm run build:all
+```
+
+## Notes
+
+- If your DB already contains tables and no Prisma migration history, baseline first before `prisma migrate deploy`.
+- In production, at least one Telnyx signature key is required for webhook validation.

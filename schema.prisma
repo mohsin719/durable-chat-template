@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// USER & AUTHENTICATION
+// ============================================================
+
+model User {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId            String               @unique @map("public_id") @db.VarChar(20)
+  email               String               @unique @map("email") @db.VarChar(255)
+  username            String               @unique @map("username") @db.VarChar(50)
+  passwordHash        String               @map("password_hash")
+  role                UserRole             @default(USER) @map("role")
+  status              UserStatus           @default(PENDING) @map("status")
+  email_verified      Boolean              @default(false) @map("email_verified")
+  isBanned            Boolean              @default(false) @map("is_banned")
+  bannedReason        String?              @map("banned_reason")
+  preferredPlatform   String               @default("Facebook") @map("preferred_platform") @db.VarChar(50)
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  // Relations
+  adminLogs           AdminLog[]           @relation("AdminLogs")
+  targetLogs          AdminLog[]           @relation("TargetLogs")
+  number_leases       number_leases[]
+  phoneNumbers        PhoneNumber[]
+  otpRequests         OtpRequest[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs           QueryAuditLog[]
+  sessions            Session[]
+  transactions        Transaction[]
+  wallet              Wallet?
+
+  // Indexes
+  @@index([email], map: "idx_users_email")
+  @@index([username], map: "idx_users_username")
+  @@index([status], map: "idx_users_status")
+  @@index([id, publicId], map: "idx_users_id_publicid")
+  @@index([role, status], map: "idx_users_role_status")
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamp(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamp(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_password_reset_tokens_user_id")
+  @@index([tokenHash], map: "idx_password_reset_tokens_hash")
+  @@index([expiresAt], map: "idx_password_reset_tokens_expires_at")
+  @@index([usedAt], map: "idx_password_reset_tokens_used_at")
+  @@map("password_reset_tokens")
+}
+
+model Session {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  refreshTokenHash String   @unique @map("refresh_token_hash")
+  expiresAt        DateTime @map("expires_at") @db.Timestamp(6)
+  userAgent        String?  @map("user_agent") @db.VarChar(500)
+  ip               String?  @map("ip") @db.VarChar(45)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_sessions_user_id")
+  @@index([expiresAt], map: "idx_sessions_expires_at")
+  @@index([userId, expiresAt], map: "idx_sessions_user_expires_at")
+  @@index([refreshTokenHash], map: "idx_sessions_refresh_token_hash")
+  @@map("sessions")
+}
+
+// ============================================================
+// WALLET & TRANSACTIONS
+// ============================================================
+
+model Wallet {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String          @unique @map("user_id") @db.Uuid
+  balance       Int             @default(0)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamp(6)
+  
+  // Relations
+  wallet_ledger wallet_ledger[]
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_wallets_user_id")
+  @@map("wallets")
+}
+
+model wallet_ledger {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  wallet_id  String     @map("wallet_id") @db.Uuid
+  type       LedgerType
+  amount     Int
+  reference  String?
+  meta       Json?
+  created_at DateTime   @default(now()) @map("created_at") @db.Timestamp(6)
+  
+  // Relations
+  wallets    Wallet     @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+
+  @@index([type, created_at], map: "idx_wallet_ledger_type_created")
+  @@index([wallet_id, created_at], map: "idx_wallet_ledger_wallet_created")
+  @@index([wallet_id], map: "idx_wallet_ledger_wallet_id")
+  @@map("wallet_ledger")
+}
+
+model Transaction {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String          @map("user_id") @db.Uuid
+  type      TransactionType @map("type")
+  amount    Int             @map("amount")
+  reference String?         @map("reference")
+  meta      Json?           @map("meta")
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamp(6)
+
+  // Relations
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_transactions_user_id")
+  @@index([userId, createdAt], map: "idx_transactions_user_created")
+  @@index([createdAt], map: "idx_transactions_created_at")
+  @@index([type, createdAt], map: "idx_transactions_type_created")
+  @@map("transactions")
+}
+
+// ============================================================
+// PHONE NUMBERS & OTP
+// ============================================================
+
+model PhoneNumber {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  e164          String            @unique @map("e164")
+  provider      String            @default("TELNYX") @map("provider") @db.VarChar(50)
+  status        PhoneNumberStatus @default(AVAILABLE) @map("status")
+  lease_id      String?           @map("lease_id") @db.Uuid
+  leasedUntil   DateTime?         @map("leased_until") @db.Timestamp(6)
+  userId        String?           @map("user_id_fallback") @db.Uuid
+  telnyxSid     String?           @map("telnyx_sid_fallback")
+  assignedAt    DateTime?         @map("assigned_at") @db.Timestamp(6)
+  lastUsedAt    DateTime?         @map("last_used_at") @db.Timestamp(6)
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  // Relations
+  number_leases number_leases[]
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  otpRequests   OtpRequest[]
+  platform_statuses number_platform_status[]
+  failure_logs      number_failure_logs[]
+
+  @@index([status], map: "idx_phone_numbers_status")
+  @@index([status, leasedUntil], map: "idx_phone_numbers_status_leased_until")
+  @@index([id, status], map: "idx_phone_numbers_id_status")
+  @@index([e164, status], map: "idx_phone_numbers_e164_status")
+  @@index([userId, assignedAt], map: "idx_phone_numbers_user_assigned")
+  @@index([lastUsedAt], map: "idx_phone_numbers_last_used_at")
+  @@map("number_pools")
+}
+
+model number_leases {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number_id    String       @map("number_id") @db.Uuid
+  user_id      String       @map("user_id") @db.Uuid
+  service_type String       @map("service_type") @db.VarChar(50)
+  price        Int
+  status       LeaseStatus  @default(ACTIVE)
+  expires_at   DateTime     @map("expires_at") @db.Timestamp(6)
+  released_at  DateTime?    @map("released_at") @db.Timestamp(6)
+  created_at   DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  
+  // Relations
+  number_pools PhoneNumber  @relation(fields: [number_id], references: [id], onDelete: Cascade)
+  users        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  otp_messages OtpRequest[]
+
+  @@index([expires_at], map: "idx_number_leases_expires_at")
+  @@index([number_id, status], map: "idx_number_leases_number_status")
+  @@index([service_type, created_at], map: "idx_number_leases_service_created")
+  @@index([user_id, created_at], map: "idx_number_leases_user_created")
+  @@index([user_id, status], map: "idx_number_leases_user_status")
+  @@map("number_leases")
+}
+
+model OtpRequest {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leaseId           String?          @map("lease_id") @db.Uuid
+  phoneNumberId     String           @map("number_id") @db.Uuid
+  userId            String           @map("user_id") @db.Uuid
+  fromNumber        String?          @map("from_number")
+  toNumber          String?          @map("to_number")
+  body              String?          @map("body")
+  parsedOtp         String?          @map("otp_code")
+  status            OtpRequestStatus @default(PENDING) @map("status")
+  serviceType       String?          @map("service_type") @db.VarChar(50)
+  priceAtRequest    Int?             @map("price_at_request")
+  expectedOtpLength Int?             @default(6) @map("expected_otp_length")
+  expiresAt         DateTime?        @map("expires_at") @db.Timestamp(6)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamp(6)
+
+  // Relations
+  number_leases     number_leases?   @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  phoneNumber       PhoneNumber      @relation(fields: [phoneNumberId], references: [id], onDelete: Cascade)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([leaseId, createdAt], map: "idx_otp_requests_lease_created")
+  @@index([userId, createdAt], map: "idx_otp_requests_user_created")
+  @@index([userId, status], map: "idx_otp_requests_user_status")
+  @@index([phoneNumberId, status, createdAt], map: "idx_otp_requests_number_status_created")
+  @@index([phoneNumberId, createdAt], map: "idx_otp_requests_number_created")
+  @@index([serviceType, createdAt], map: "idx_otp_requests_service_created")
+  @@index([parsedOtp], map: "idx_otp_requests_parsed_otp")
+  @@index([status, createdAt], map: "idx_otp_requests_status_created")
+  @@map("otp_messages")
+}
+
+model SmsLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phoneNumberId String   @map("phone_number_id") @db.Uuid
+  fromNumber    String?  @map("from_number")
+  toNumber      String?  @map("to_number")
+  body          String   @map("body")
+  rawPayload    Json?    @map("raw_payload")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([phoneNumberId, createdAt], map: "idx_sms_logs_number_created")
+  @@index([toNumber, createdAt], map: "idx_sms_logs_to_number_created")
+  @@map("sms_logs")
+}
+
+model number_platform_status {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number_id      String         @map("number_id") @db.Uuid
+  platform       String         @map("platform") @db.VarChar(50)
+  status         PlatformStatus @default(AVAILABLE)
+  failure_count  Int            @default(0) @map("failure_count")
+  success_count  Int            @default(0) @map("success_count")
+  health_score   Int            @default(100) @map("health_score")
+  last_error     String?        @map("last_error")
+  cooldown_until DateTime?      @map("cooldown_until") @db.Timestamp(6)
+  updated_at     DateTime       @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  number_pools   PhoneNumber    @relation(fields: [number_id], references: [id], onDelete: Cascade)
+
+  @@unique([number_id, platform], map: "uk_number_platform_status")
+  @@index([platform, status], map: "idx_platform_status_platform_status")
+  @@index([number_id, platform], map: "idx_platform_status_number_platform")
+  @@index([cooldown_until], map: "idx_platform_status_cooldown_until")
+  @@map("number_platform_status")
+}
+
+model number_failure_logs {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number_id     String      @map("number_id") @db.Uuid
+  platform      String      @map("platform") @db.VarChar(50)
+  error_type    String      @map("error_type") @db.VarChar(50)
+  error_message String?     @map("error_message")
+  timestamp     DateTime    @default(now()) @map("timestamp") @db.Timestamp(6)
+
+  number_pools  PhoneNumber @relation(fields: [number_id], references: [id], onDelete: Cascade)
+
+  @@index([number_id, platform], map: "idx_failure_logs_number_platform")
+  @@index([platform, timestamp], map: "idx_failure_logs_platform_timestamp")
+  @@index([error_type], map: "idx_failure_logs_error_type")
+  @@map("number_failure_logs")
+}
+
+model platform_rules {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform                  String    @unique @map("platform") @db.VarChar(50)
+  base_cooldown_hours       Int       @map("base_cooldown_hours")
+  high_risk_cooldown_hours  Int       @map("high_risk_cooldown_hours")
+  max_failures_before_block Int       @map("max_failures_before_block")
+  risk_level                RiskLevel @map("risk_level")
+  created_at                DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updated_at                DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([platform], map: "idx_platform_rules_platform")
+  @@map("platform_rules")
+}
+
+// ============================================================
+// PLATFORM & SERVICE CONFIGURATION
+// ============================================================
+
+model PlatformOtpConfig {
+  id           String    @id @default(cuid())
+  platformName String    @unique @map("platform_name")
+  otpLength    Int       @map("otp_length")
+  otpPattern   String?   @map("otp_pattern")
+  description  String?   @map("description")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([platformName], map: "idx_platform_otp_config_platform_name")
+  @@map("platform_otp_configs")
+}
+
+model ServiceTariff {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceName String   @unique @map("service_name") @db.VarChar(50)
+  pricePkr    Int      @map("price_pkr")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([serviceName], map: "idx_service_tariff_service_name")
+  @@map("service_tariffs")
+}
+
+model service_pricing {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  service_type String   @unique @map("service_type") @db.VarChar(50)
+  price        Int
+  is_active    Boolean  @default(true) @map("is_active")
+  updated_at   DateTime @map("updated_at") @db.Timestamp(6)
+
+  @@index([service_type], map: "idx_service_pricing_service_type")
+  @@index([is_active], map: "idx_service_pricing_is_active")
+  @@map("service_pricing")
+}
+
+// ============================================================
+// LOGGING & AUDIT
+// ============================================================
+
+model AdminLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adminUserId  String   @map("admin_user_id") @db.Uuid
+  targetUserId String?  @map("target_user_id") @db.Uuid
+  action       String   @map("action") @db.VarChar(100)
+  metadata     Json?    @map("metadata")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  // Relations
+  admin        User     @relation("AdminLogs", fields: [adminUserId], references: [id], onDelete: Cascade)
+  targetUser   User?    @relation("TargetLogs", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([adminUserId], map: "idx_admin_logs_admin_user_id")
+  @@index([action, createdAt], map: "idx_admin_logs_action_created")
+  @@index([createdAt], map: "idx_admin_logs_created_at")
+  @@index([targetUserId], map: "idx_admin_logs_target_user_id")
+  @@map("admin_logs")
+}
+
+model QueryAuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  queryType    String?  @map("query_type") @db.VarChar(50)
+  tableName    String?  @map("table_name") @db.VarChar(100)
+  timestamp    DateTime @default(now()) @db.Timestamp(6)
+  durationMs   Int?     @map("duration_ms")
+  affectedRows Int?     @map("affected_rows")
+  errorMessage String?  @map("error_message")
+  
+  // Relations
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([timestamp], map: "idx_query_audit_log_timestamp")
+  @@index([userId], map: "idx_query_audit_log_user_id")
+  @@index([queryType, timestamp], map: "idx_query_audit_log_query_type_timestamp")
+  @@map("query_audit_log")
+}
+
+model event_logs {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type       String   @map("type") @db.VarChar(100)
+  entity_id  String?  @map("entity_id")
+  severity   LogLevel @default(INFO) @map("severity")
+  payload    Json?    @map("payload")
+  created_at DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([type, created_at], map: "idx_event_logs_type_created")
+  @@index([severity, created_at], map: "idx_event_logs_severity_created")
+  @@map("event_logs")
+}
+
+// ============================================================
+// SECURITY & RATE LIMITING
+// ============================================================
+
+model BlockedIp {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ipAddress    String    @unique @map("ip_address") @db.VarChar(45)
+  reason       String?   @map("reason") @db.VarChar(255)
+  blockedUntil DateTime? @map("blocked_until") @db.Timestamp(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([ipAddress], map: "idx_blocked_ips_address")
+  @@index([blockedUntil], map: "idx_blocked_ips_blocked_until")
+  @@index([ipAddress, blockedUntil], map: "idx_blocked_ips_address_blocked_until")
+  @@map("blocked_ips")
+}
+
+model RateLimitLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fingerprint   String   @map("key") @db.VarChar(255)
+  endpoint      String   @default("global") @map("endpoint") @db.VarChar(255)
+  requestCount  Int      @default(1) @map("count")
+  windowStart   DateTime @map("window_start") @db.Timestamp(6)
+  windowEnd     DateTime @map("window_end") @db.Timestamp(6)
+  limitExceeded Boolean  @default(false) @map("blocked")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([fingerprint], map: "idx_rate_limit_fingerprint")
+  @@index([createdAt], map: "idx_rate_limit_created_at")
+  @@index([fingerprint, endpoint], map: "idx_rate_limit_fingerprint_endpoint")
+  @@index([fingerprint, endpoint, windowStart], map: "idx_rate_limit_fingerprint_endpoint_window")
+  @@map("rate_limit_events")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  ADMIN_ADJUSTMENT
+  REFUND
+}
+
+enum PhoneNumberStatus {
+  AVAILABLE
+  LEASED
+  MAINTENANCE
+  ASSIGNED
+  REUSABLE
+  EXPIRED
+
+  @@map("NumberStatus")
+}
+
+enum LeaseStatus {
+  ACTIVE
+  EXPIRED
+  RELEASED
+  CANCELLED
+}
+
+enum OtpRequestStatus {
+  PENDING
+  RECEIVED
+  PARSED
+  EXPIRED
+  FAILED
+  COMPLETED
+
+  @@map("OtpStatus")
+}
+
+enum LedgerType {
+  CREDIT
+  DEBIT
+  ADMIN_ADJUSTMENT
+  REFUND
+  NUMBER_PURCHASE
+  OTP_BILLING
+}
+
+enum PlatformStatus {
+  AVAILABLE
+  COOLDOWN
+  BLOCKED
+  HIGH_RISK
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  CRITICAL
+}
